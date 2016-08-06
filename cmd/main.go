@@ -3,11 +3,18 @@ package main
 import (
 	"log"
 	"syscall"
+	"os"
 	"github.com/gearmover/web2tor/proxy"
 )
 
 func main() {
 	log.Println("Web2Tor HTTP Proxy")
+
+	domain := ".chr1s.co"
+
+	if len(os.Args) > 1 {
+		domain = "." + os.Args[1]
+	}
 
 	httpServer, err := proxy.NewHTTPServer("0.0.0.0:80", "127.0.0.1:9050")
 	if err != nil {
@@ -24,7 +31,7 @@ func main() {
 	syscall.Setuid(1000)
 	syscall.Setgid(1000)
 
-	go httpServer.ListenAndServe()
+	go httpServer.ListenAndServe(domain)
 
-	httpsServer.ListenAndServe()
+	httpsServer.ListenAndServe(domain)
 }

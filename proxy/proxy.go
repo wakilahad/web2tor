@@ -72,7 +72,7 @@ func NewHTTPSServer(listenAddr, dialAddr string) (*Server, error) {
 	return s, nil
 }
 
-func (s *Server) ListenAndServe() error {
+func (s *Server) ListenAndServe(domain string) error {
 
 	defer s.fromConn.Close()
 
@@ -87,11 +87,11 @@ func (s *Server) ListenAndServe() error {
 			continue
 		}
 
-		go s.HandleConn(conn)
+		go s.HandleConn(conn, domain)
 	}
 }
 
-func (s *Server) HandleConn(conn net.Conn) {
+func (s *Server) HandleConn(conn net.Conn, domain string) {
 
 	// make sure to clean up the incoming connection
 	defer conn.Close()
@@ -111,7 +111,7 @@ func (s *Server) HandleConn(conn net.Conn) {
 	log.Printf("Request: %v\n", req)
 
 	// seperates out the host and URI
-	httpRE,err := regexp.Compile("([a-zA-Z0-9]+.onion){1}.chr1s.co")
+	httpRE,err := regexp.Compile("([a-zA-Z0-9]+.onion){1}"+domain)
 	if err != nil {
 		log.Println("[!] Error Compiling URL Regular Expression : ", err.Error())
 		return
@@ -207,7 +207,7 @@ func (s *Server) HandleConn(conn net.Conn) {
 	log.Println("Response Code : ", resp.Status)
 
 	if len(resp.Header.Get("Location")) > 0 {
-		location := bytes.Replace([]byte(resp.Header.Get("Location")), []byte(Host), []byte(Host + ".chr1s.co"), -1)
+		location := bytes.Replace([]byte(resp.Header.Get("Location")), []byte(Host), []byte(Host + domain), -1)
 		resp.Header.Set("Location", string(location))
 	}
 
@@ -233,7 +233,7 @@ func (s *Server) HandleConn(conn net.Conn) {
 	}
 
 	toStrings := []string{
-		Host + ".chr1s.co",
+		Host + domain,
 	}
 
 	if len(fromStrings) != len(toStrings) {
