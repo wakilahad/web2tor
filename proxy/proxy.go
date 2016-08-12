@@ -54,10 +54,10 @@ func NewHTTPSServer(listenAddr, dialAddr string) (*Server, error) {
     }
 
     config := &tls.Config{Certificates: []tls.Certificate{cer}}
-    ln, err := tls.Listen("tcp", listenAddr, config) 
+    ln, err := tls.Listen("tcp", listenAddr, config)
     if err != nil {
         return nil, err
-    }	
+    }
 
 	dialer, err := proxy.SOCKS5("tcp", dialAddr, nil, proxy.Direct)
 	if err != nil {
@@ -137,7 +137,7 @@ func (s *Server) HandleConn(conn net.Conn, domain string) {
 
 		tmpl.Execute(sWriter, struct{}{})
 		sWriter.Flush()
-		
+
 		return
 	}
 
@@ -166,9 +166,12 @@ func (s *Server) HandleConn(conn net.Conn, domain string) {
 
 		tmpl.Execute(sWriter, struct{}{})
 		sWriter.Flush()
-		
+
 		return
 	}
+
+	// DEBUG:
+	log.Printf("Outgoing Request: %v\n", req)
 
 	// clean up the outgoing connection
 	defer toConn.Close()
@@ -186,7 +189,7 @@ func (s *Server) HandleConn(conn net.Conn, domain string) {
 
 	// set a query string parameter to bust the cache
 	q := req.URL.Query()
-	q.Set("w2t", strconv.Itoa(int(time.Now().Unix())))
+	q.Set("cbuster", strconv.Itoa(int(time.Now().Unix())))
 	req.URL.RawQuery = q.Encode()
 
 	// DEBUG:
