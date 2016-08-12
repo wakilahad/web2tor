@@ -1,10 +1,8 @@
 package proxy
 
 import (
-	"io"
 	"bytes"
-	"time"
-	"strconv"
+	"io/ioutil"
 	"golang.org/x/net/proxy"
 	"regexp"
 	"bufio"
@@ -14,7 +12,6 @@ import (
 	"net/http"
 	"crypto/tls"
 	"html/template"
-	"net/http/httputil"
 )
 
 type Server struct {
@@ -91,6 +88,22 @@ func (s *Server) ListenAndServe(domain string) error {
 	}
 }
 
+func removeDuplicates(array [][]byte) [][]byte {
+	uniq := make(map[string][]byte)
+
+	for i:=0; i < len(array); i++ {
+		uniq[string(array[i])] = array[i]
+	}
+
+	newArray := make([][]byte, 0, len(uniq))
+
+	for k,_ := range uniq {
+		newArray = append(newArray, uniq[k])
+	}
+
+	return newArray
+}
+
 func (s *Server) HandleConn(conn net.Conn, domain string) {
 
 	// make sure to clean up the incoming connection
@@ -108,7 +121,7 @@ func (s *Server) HandleConn(conn net.Conn, domain string) {
 	}
 
 	// DEBUG:
-	log.Printf("Request: %v\n", req)
+	//log.Printf("Request: %v\n", req)
 
 	// seperates out the host and URI
 	httpRE,err := regexp.Compile("([a-zA-Z0-9]+.onion){1}"+domain)
@@ -149,7 +162,8 @@ func (s *Server) HandleConn(conn net.Conn, domain string) {
 	URL := Host + ":80"
 
 	// DEBUG:
-	log.Println("[*] Proxying URL : ", URL)
+	//log.Println("[*] Proxying URL : ", URL)
+	//log.Println("[*] Req Cookies : ", req.Header)
 
 	// create the SOCKS5 connection
 	toConn, err := s.dialConn.Dial("tcp", URL)
@@ -170,8 +184,11 @@ func (s *Server) HandleConn(conn net.Conn, domain string) {
 		return
 	}
 
-	// DEBUG:
-	log.Printf("Outgoing Request: %v\n", req)
+	// reset the request Host to the original URL
+	req.Host = Host
+
+	// DEBUG: print out the request
+	//log.Println("Request:", req)
 
 	// clean up the outgoing connection
 	defer toConn.Close()
@@ -187,14 +204,6 @@ func (s *Server) HandleConn(conn net.Conn, domain string) {
 		return
 	}
 
-	// set a query string parameter to bust the cache
-	q := req.URL.Query()
-	q.Set("cbuster", strconv.Itoa(int(time.Now().Unix())))
-	req.URL.RawQuery = q.Encode()
-
-	// DEBUG:
-	log.Println("[*] Modified URL : ", req.URL.String())
-
 	// write the request to the SOCKS5 proxy
 	req.Write(dWriter)
 	dWriter.Flush()
@@ -207,7 +216,7 @@ func (s *Server) HandleConn(conn net.Conn, domain string) {
 	}
 
 	// DEBUG:
-	log.Println("Response Code : ", resp.Status)
+	//log.Println("Response Code : ", resp.Status)
 
 	if len(resp.Header.Get("Location")) > 0 {
 		location := bytes.Replace([]byte(resp.Header.Get("Location")), []byte(Host), []byte(Host + domain), -1)
@@ -215,20 +224,7 @@ func (s *Server) HandleConn(conn net.Conn, domain string) {
 	}
 
 	// parse the response and replace any anchor links with an updated URL
-	buffer := make([]byte, 2^16)
-	tmpNewReader := &bytes.Buffer{}
-
-	for {
-		n, err := resp.Body.Read(buffer)
-		if err != nil && err != io.EOF {
-			break
-		} else if err == io.EOF && n == 0 {
-			break
-		}
-
-		// write to a temporary buffer
-		tmpNewReader.Write(buffer[0:n])
-	}
+	buffer, _ := ioutil.ReadAll(resp.Body)
 
 	// replace all host URL's with modified ones
 	fromStrings := []string{
@@ -245,65 +241,40 @@ func (s *Server) HandleConn(conn net.Conn, domain string) {
 	}
 
 	// replace all the strings that need replacing in the returned document
-	log.Printf("Original Length: %d\n", len(tmpNewReader.Bytes()))
-	buffer = bytes.Replace(tmpNewReader.Bytes(), []byte(fromStrings[0]), []byte(toStrings[0]), -1)
-	log.Printf("   New   Length: %d\n", len(buffer))
+	//log.Printf("Original Length: %d\n", len(tmpNewReader.Bytes()))
+	//buffer = bytes.Replace(tmpNewReader.Bytes(), []byte(fromStrings[0]), []byte(toStrings[0]), -1)
+	onionRE := regexp.MustCompile("[a-zA-Z0-9]+.onion")
+	onionMatches := onionRE.FindAll(buffer, -1)
 
-	/*
-	// use regular expressions to replace all relative URI's with a modified version
-	uriRE, err := regexp.Compile("((href=)|(src=))('|\")(http://)?(/)?([^@:]+)")
-	if err != nil {
-		panic("fix your regular expression : " + err.Error())
+	log.Printf("URLS : %v", onionMatches)
+
+	onionMatches = removeDuplicates(onionMatches)
+
+	log.Printf("URLS : %v", onionMatches)
+
+	for i:=0; i < len(onionMatches); i++ {
+		buffer = bytes.Replace([]byte(buffer), []byte(onionMatches[i]), []byte(string(onionMatches[i]) + domain), -1)
 	}
 
-	uriRE.ReplaceAllFunc(buffer, func (what []byte) []byte {
-		matches := uriRE.FindSubmatch(what)
+	//jsRE := regexp.MustCompile("((S|s)(c|C)(r|R)(i|I)(p|P)(t|T))|((j|J)|(a|A)(v|V)(a|A))")
 
-		if len(matches) != 7 {
-			log.Println("[!] Error With RegEX : ", len(matches))
-			return what
-		}
+	//buffer = jsRE.ReplaceAll([]byte(buffer), []byte("disabled-js"))
 
-		new := string(matches[0]) + string(matches[3]) + "http://159.203.57.234/" + Host + "/" + string(matches[6])
-
-		log.Println("Replacing ", string(what), " with ", new)
-
-		return []byte(new)
-	})
-	*/
-
-	/*for i := 1; i < len(fromStrings); i++ {
-		newBuffer := Replace(buffer, []byte(fromStrings[i]), []byte(toStrings[i]))
-		buffer = newBuffer
-		log.Printf("Length: %d bytes\n", len(buffer))
-	}*/
-
-	// create a new io.Reader with the modified document
-	//tmp2NewReader := bytes.NewBuffer(buffer)
+	//log.Printf("[*] Resp Cookies: %v\n", resp.Header)
 
 	// close the previous response body
 	resp.Body.Close()
 
+	newResp := resp
+
 	// update the response content length
-	resp.ContentLength = int64(len(buffer))
-	resp.TransferEncoding = nil
-
-	dump, err := httputil.DumpResponse(resp, false)
-	if err != nil {
-		log.Printf("[!] Error Dumping Response : %s\n", err.Error())
-		return
-	}
-
-	log.Printf("Precursor: %s\n", dump)
-	log.Printf("Body Len : %s\n", len(buffer))
-
-	sWriter.Write(dump)
-	sWriter.Write(buffer)
+	newResp.ContentLength = int64(len(buffer))
+	newResp.TransferEncoding = nil
 
 	// assign the new response body as a io.ReadCloser
-	//resp.Body = ioutil.NopCloser(tmp2NewReader)
+	newResp.Body = ioutil.NopCloser(bytes.NewBuffer(buffer))
 
 	// write the response to the source connection
-	//resp.Write(sWriter)
+	newResp.Write(sWriter)
 	sWriter.Flush()
 }
